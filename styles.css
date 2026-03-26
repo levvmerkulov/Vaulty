@@ -73,13 +73,13 @@ button {
   min-height: 100vh;
   display: grid;
   place-items: center;
-  padding: 28px 24px;
+  padding: 32px 24px;
 }
 
 .auth-hero {
-  width: min(100%, 1120px);
+  width: min(100%, 980px);
   display: grid;
-  grid-template-columns: minmax(320px, 0.9fr) minmax(360px, 1.1fr);
+  grid-template-columns: minmax(280px, 0.82fr) minmax(360px, 1fr);
   gap: 28px;
   align-items: stretch;
 }
@@ -94,33 +94,63 @@ button {
 }
 
 .auth-copy {
-  padding: 34px;
+  padding: 40px 36px;
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: 16px;
+  gap: 14px;
 }
 
 .auth-copy h1 {
   margin: 0;
-  max-width: 11ch;
-  font-family: "Avenir Next", "Helvetica Neue", "Segoe UI", sans-serif;
-  font-size: clamp(2.8rem, 6vw, 5rem);
-  line-height: 0.94;
-  font-weight: 800;
-  letter-spacing: -0.07em;
+  max-width: 8ch;
+  font-family: "Helvetica Neue", "Avenir Next", "Segoe UI", sans-serif;
+  font-size: clamp(2.4rem, 5vw, 4.1rem);
+  line-height: 1.01;
+  font-weight: 700;
+  letter-spacing: -0.04em;
 }
 
 .auth-copy p {
   margin: 0;
-  max-width: 32rem;
+  max-width: 30rem;
   color: var(--muted);
-  line-height: 1.65;
-  font-size: 1.04rem;
+  line-height: 1.6;
+  font-size: 1rem;
 }
 
 .auth-panel {
-  padding: 24px;
+  padding: 28px;
+}
+
+.auth-switch {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 22px;
+}
+
+.auth-switch-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 58px;
+  border: 0;
+  border-radius: 18px;
+  background: rgba(36, 24, 15, 0.08);
+  color: var(--text);
+  font-weight: 600;
+  font-size: 1.05rem;
+  transition: background-color 180ms ease, color 180ms ease, transform 180ms ease;
+}
+
+.auth-switch-button:hover {
+  transform: translateY(-1px);
+}
+
+.auth-switch-button.is-active {
+  background: var(--accent);
+  color: #fff;
 }
 
 .hero {
@@ -171,11 +201,11 @@ button {
 .brand h1 {
   margin: 0;
   max-width: 11ch;
-  font-family: "Avenir Next", "Helvetica Neue", "Segoe UI", sans-serif;
+  font-family: "Helvetica Neue", "Avenir Next", "Segoe UI", sans-serif;
   font-size: clamp(3rem, 7vw, 5.4rem);
   line-height: 0.92;
-  font-weight: 800;
-  letter-spacing: -0.07em;
+  font-weight: 700;
+  letter-spacing: -0.05em;
 }
 
 .brand p {
@@ -460,11 +490,11 @@ button {
 
 .section-title {
   margin: 0;
-  font-family: "Avenir Next", "Helvetica Neue", "Segoe UI", sans-serif;
+  font-family: "Helvetica Neue", "Avenir Next", "Segoe UI", sans-serif;
   font-size: clamp(2rem, 4vw, 3.1rem);
   line-height: 0.96;
-  font-weight: 800;
-  letter-spacing: -0.06em;
+  font-weight: 700;
+  letter-spacing: -0.04em;
 }
 
 .section-copy {
@@ -507,7 +537,11 @@ button {
 .auth-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
+  gap: 18px;
+}
+
+.auth-grid--single {
+  grid-template-columns: 1fr;
 }
 
 .auth-card {
@@ -517,9 +551,51 @@ button {
   border: 1px solid rgba(67, 48, 33, 0.08);
 }
 
+.auth-card h3,
 .auth-card h4 {
   margin: 0;
-  font-size: 1rem;
+  font-family: "Helvetica Neue", "Avenir Next", "Segoe UI", sans-serif;
+  font-size: 1.75rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.auth-card .form-actions {
+  margin-top: auto;
+}
+
+.auth-card .primary-button {
+  width: 100%;
+  justify-content: center;
+  min-height: 56px;
+  font-size: 1.1rem;
+}
+
+.auth-card--single {
+  max-width: 100%;
+  min-height: 540px;
+  padding: 24px;
+}
+
+.auth-subcopy {
+  max-width: 30rem;
+  margin-top: -4px;
+  margin-bottom: 6px;
+}
+
+.remember-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  color: var(--muted);
+  padding: 2px 0;
+}
+
+.remember-row input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
 }
 
 .account-badge {
@@ -626,6 +702,9 @@ button {
 .primary-button,
 .danger-button,
 .toggle-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border: 0;
   border-radius: 999px;
   padding: 12px 18px;

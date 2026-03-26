@@ -121,6 +121,7 @@ def ensure_database():
             CREATE TABLE IF NOT EXISTS users (
                 id TEXT PRIMARY KEY,
                 member_id TEXT NOT NULL UNIQUE,
+                display_name TEXT NOT NULL DEFAULT '',
                 username TEXT NOT NULL UNIQUE,
                 password_hash TEXT NOT NULL,
                 created_at TEXT NOT NULL
@@ -145,6 +146,7 @@ def ensure_database():
         ensure_column(cursor, "facts", "author_name_snapshot", "TEXT")
         ensure_column(cursor, "facts", "updated_at", "TEXT")
         ensure_column(cursor, "facts", "source_transcript", "TEXT DEFAULT ''")
+        ensure_column(cursor, "users", "display_name", "TEXT NOT NULL DEFAULT ''")
 
         cursor.execute(
             """
@@ -153,6 +155,12 @@ def ensure_database():
                 author_name_snapshot = COALESCE(author_name_snapshot, member_name_snapshot),
                 updated_at = COALESCE(updated_at, created_at),
                 source_transcript = COALESCE(source_transcript, '')
+            """
+        )
+        cursor.execute(
+            """
+            UPDATE users
+            SET display_name = COALESCE(NULLIF(TRIM(display_name), ''), username)
             """
         )
 
@@ -234,6 +242,13 @@ def normalize_username(username):
     return value
 
 
+def normalize_display_name(display_name):
+    value = re.sub(r"\s+", " ", str(display_name).strip())
+    if len(value) < 2 or len(value) > 48:
+        raise ValueError("Имя должно быть длиной 2-48 символов.")
+    return value
+
+
 def get_week_value(target_datetime):
     iso_year, iso_week, _ = target_datetime.isocalendar()
     return f"{iso_year}-W{iso_week:02d}"
@@ -280,31 +295,14 @@ def get_members(connection, include_deleted=True):
     ]
 
 
-def get_registerable_members(connection):
-    rows = connection.execute(
-        """
-        SELECT members.id, members.name
-        FROM members
-        LEFT JOIN users ON users.member_id = members.id
-        WHERE members.deleted = 0
-          AND members.in_team = 1
-          AND users.id IS NULL
-        ORDER BY members.created_at ASC, members.rowid ASC
-        """
-    ).fetchall()
-    return [{"id": row["id"], "name": row["name"]} for row in rows]
-
-
 def serialize_current_user(row):
     if row is None:
         return None
     return {
         "id": row["id"],
-        "memberId": row["member_id"],
-        "memberName": row["member_name"],
+        "name": row["display_name"] or row["username"],
         "username": row["username"],
-        "inTeam": bool(row["in_team"]),
-        "deleted": bool(row["deleted"]),
+        "legacyMemberId": row["member_id"],
     }
 
 
@@ -441,27 +439,24 @@ def get_focus_page(items, fact_id, page_size):
 
 
 def dashboard_payload(query_params, current_user):
-    with get_connection() as connection:
-        registerable_members = get_registerable_members(connection)
-        if current_user is None:
-            return {
-                "totalFacts": 0,
-                "filteredTotal": 0,
-                "tags": [],
-                "facts": [],
-                "members": [],
-                "leaderboard": [],
-                "registerableMembers": registerable_members,
-                "currentUser": None,
-                "focusFactId": "",
-                "pagination": {
-                    "page": 1,
-                    "totalPages": 1,
-                    "totalItems": 0,
-                    "startItem": 0,
-                    "endItem": 0,
-                },
-            }
+    if current_user is None:
+        return {
+            "totalFacts": 0,
+            "filteredTotal": 0,
+            "tags": [],
+            "facts": [],
+            "members": [],
+            "leaderboard": [],
+            "currentUser": None,
+            "focusFactId": "",
+            "pagination": {
+                "page": 1,
+                "totalPages": 1,
+                "totalItems": 0,
+                "startItem": 0,
+                "endItem": 0,
+            },
+        }
 
     scope = query_params.get("scope", ["total"])[0]
     week = query_params.get("week", [get_week_value(datetime.now().astimezone())])[0]
@@ -494,7 +489,6 @@ def dashboard_payload(query_params, current_user):
         "facts": page_items,
         "members": members,
         "leaderboard": leaderboard,
-        "registerableMembers": registerable_members,
         "currentUser": serialize_current_user(current_user),
         "focusFactId": focus_fact_id if any(fact["id"] == focus_fact_id for fact in facts) else "",
         "pagination": pagination,
@@ -541,14 +535,11 @@ def get_current_user(connection, token):
         SELECT
             users.id,
             users.member_id,
+            users.display_name,
             users.username,
-            sessions.expires_at,
-            members.name AS member_name,
-            members.in_team,
-            members.deleted
+            sessions.expires_at
         FROM sessions
         JOIN users ON users.id = sessions.user_id
-        JOIN members ON members.id = users.member_id
         WHERE sessions.token = ?
         """,
         (token,),
@@ -580,13 +571,14 @@ def clear_session(connection, token):
         connection.execute("DELETE FROM sessions WHERE token = ?", (token,))
 
 
-def build_session_cookie(token):
+def build_session_cookie(token, remember_me):
     morsel = cookies.SimpleCookie()
     morsel[SESSION_COOKIE_NAME] = token
     morsel[SESSION_COOKIE_NAME]["path"] = "/"
-    morsel[SESSION_COOKIE_NAME]["max-age"] = str(SESSION_MAX_AGE)
     morsel[SESSION_COOKIE_NAME]["httponly"] = True
     morsel[SESSION_COOKIE_NAME]["samesite"] = "Lax"
+    if remember_me:
+        morsel[SESSION_COOKIE_NAME]["max-age"] = str(SESSION_MAX_AGE)
     return morsel.output(header="").strip()
 
 
@@ -608,39 +600,14 @@ def require_auth(connection, handler):
     return user
 
 
-def require_team_user(connection, handler):
-    user = require_auth(connection, handler)
-    if user["deleted"] or not user["in_team"]:
-        raise PermissionError("Нужен кабинет действующего участника команды.")
-    return user
-
-
 def register_user(payload):
-    member_id = str(payload.get("memberId", "")).strip()
+    display_name = normalize_display_name(payload.get("name", ""))
     username = normalize_username(payload.get("username", ""))
     password = str(payload.get("password", ""))
     if len(password) < 6:
         raise ValueError("Пароль должен быть не короче 6 символов.")
 
     with get_connection() as connection:
-        member = connection.execute(
-            """
-            SELECT id, name, deleted, in_team
-            FROM members
-            WHERE id = ?
-            """,
-            (member_id,),
-        ).fetchone()
-        if member is None or member["deleted"] or not member["in_team"]:
-            raise LookupError("Нельзя создать кабинет для этого участника.")
-
-        existing_member_user = connection.execute(
-            "SELECT id FROM users WHERE member_id = ?",
-            (member_id,),
-        ).fetchone()
-        if existing_member_user:
-            raise ValueError("Для этого участника кабинет уже создан.")
-
         existing_username = connection.execute(
             "SELECT id FROM users WHERE username = ?",
             (username,),
@@ -649,21 +616,21 @@ def register_user(payload):
             raise ValueError("Такой логин уже занят.")
 
         user_id = str(uuid.uuid4())
+        legacy_member_id = f"user:{user_id}"
         connection.execute(
             """
-            INSERT INTO users (id, member_id, username, password_hash, created_at)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO users (id, member_id, display_name, username, password_hash, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (user_id, member_id, username, hash_password(password), utc_now_iso()),
+            (user_id, legacy_member_id, display_name, username, hash_password(password), utc_now_iso()),
         )
         token = create_session(connection, user_id)
         connection.commit()
 
         user = connection.execute(
             """
-            SELECT users.id, users.member_id, users.username, members.name AS member_name, members.in_team, members.deleted
+            SELECT users.id, users.member_id, users.display_name, users.username
             FROM users
-            JOIN members ON members.id = users.member_id
             WHERE users.id = ?
             """,
             (user_id,),
@@ -682,13 +649,10 @@ def login_user(payload):
             SELECT
                 users.id,
                 users.member_id,
+                users.display_name,
                 users.username,
-                users.password_hash,
-                members.name AS member_name,
-                members.in_team,
-                members.deleted
+                users.password_hash
             FROM users
-            JOIN members ON members.id = users.member_id
             WHERE users.username = ?
             """,
             (username,),
@@ -799,8 +763,8 @@ def create_fact(payload, current_user):
                 member["id"],
                 member["name"],
                 member["color"],
-                current_user["member_id"],
-                current_user["member_name"],
+                current_user["id"],
+                current_user["username"],
                 text,
                 created_at,
                 created_at,
@@ -826,7 +790,8 @@ def update_fact(fact_id, payload, current_user):
         ).fetchone()
         if fact is None:
             raise LookupError("Факт не найден.")
-        if fact["author_id"] != current_user["member_id"]:
+        allowed_author_ids = {current_user["id"], current_user["member_id"]}
+        if fact["author_id"] not in allowed_author_ids:
             raise PermissionError("Редактировать факт может только тот, кто его добавил.")
 
         updated_at = utc_now_iso()
@@ -908,11 +873,13 @@ class VaultyHandler(BaseHTTPRequestHandler):
 
             if parsed_url.path == "/api/auth/register":
                 user, token = register_user(payload)
-                return self.send_json(201, {"user": user}, headers=[("Set-Cookie", build_session_cookie(token))])
+                remember_me = bool(payload.get("rememberMe"))
+                return self.send_json(201, {"user": user}, headers=[("Set-Cookie", build_session_cookie(token, remember_me))])
 
             if parsed_url.path == "/api/auth/login":
                 user, token = login_user(payload)
-                return self.send_json(200, {"user": user}, headers=[("Set-Cookie", build_session_cookie(token))])
+                remember_me = bool(payload.get("rememberMe"))
+                return self.send_json(200, {"user": user}, headers=[("Set-Cookie", build_session_cookie(token, remember_me))])
 
             if parsed_url.path == "/api/auth/logout":
                 logout_user(self)
@@ -920,17 +887,17 @@ class VaultyHandler(BaseHTTPRequestHandler):
 
             if parsed_url.path == "/api/facts/summarize":
                 with get_connection() as connection:
-                    require_team_user(connection, self)
+                    require_auth(connection, self)
                 return self.send_json(200, summarize_transcript(payload.get("transcript", "")))
 
             if parsed_url.path == "/api/facts":
                 with get_connection() as connection:
-                    current_user = require_team_user(connection, self)
+                    current_user = require_auth(connection, self)
                 return self.send_json(201, create_fact(payload, current_user))
 
             if parsed_url.path == "/api/members":
                 with get_connection() as connection:
-                    require_team_user(connection, self)
+                    require_auth(connection, self)
                 return self.send_json(201, create_member(payload))
 
             return self.send_json(404, {"error": "Маршрут не найден."})
@@ -950,13 +917,13 @@ class VaultyHandler(BaseHTTPRequestHandler):
 
             if parsed_url.path.startswith("/api/members/"):
                 with get_connection() as connection:
-                    require_team_user(connection, self)
+                    require_auth(connection, self)
                 member_id = parsed_url.path.rsplit("/", 1)[-1]
                 return self.send_json(200, update_member(member_id, payload))
 
             if parsed_url.path.startswith("/api/facts/"):
                 with get_connection() as connection:
-                    current_user = require_team_user(connection, self)
+                    current_user = require_auth(connection, self)
                 fact_id = parsed_url.path.rsplit("/", 1)[-1]
                 return self.send_json(200, update_fact(fact_id, payload, current_user))
 
@@ -977,7 +944,7 @@ class VaultyHandler(BaseHTTPRequestHandler):
 
         try:
             with get_connection() as connection:
-                require_team_user(connection, self)
+                require_auth(connection, self)
             member_id = parsed_url.path.rsplit("/", 1)[-1]
             return self.send_json(200, delete_member(member_id))
         except LookupError as error:

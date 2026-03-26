@@ -23,11 +23,14 @@ const state = {
     tags: "",
   },
   authDraft: {
+    mode: "login",
     loginUsername: "",
     loginPassword: "",
-    registerMemberId: "",
+    loginRemember: true,
+    registerName: "",
     registerUsername: "",
     registerPassword: "",
+    registerRemember: true,
   },
   adminDraft: {
     name: "",
@@ -95,13 +98,6 @@ async function loadDashboard() {
       state.draft.memberId = activeMember?.id || "";
     }
 
-    const registerableExists = payload.registerableMembers.some(
-      (member) => member.id === state.authDraft.registerMemberId,
-    );
-    if (!registerableExists) {
-      state.authDraft.registerMemberId = payload.registerableMembers[0]?.id || "";
-    }
-
     if (payload.focusFactId) {
       state.detailsOpen = true;
     }
@@ -141,7 +137,7 @@ function render() {
   const dashboard = state.dashboard || emptyDashboard();
   const currentUser = dashboard.currentUser;
   if (!currentUser) {
-    app.innerHTML = renderAuthPage(dashboard.registerableMembers);
+    app.innerHTML = renderAuthPage();
     bindAuthEvents();
     return;
   }
@@ -346,78 +342,135 @@ function render() {
   maybeScrollToFocusedFact();
 }
 
-function renderAuthPage(registerableMembers) {
+function renderAuthPage() {
+  const isLogin = state.authDraft.mode === "login";
   return `
     <main class="auth-shell">
       <section class="auth-hero">
         <article class="auth-copy">
           <span class="eyebrow">Vaulty · копилка фактов команды</span>
-          <h1>Сначала войди в кабинет, потом работай с фактами.</h1>
+          <h1>${isLogin ? "Вход в Vaulty" : "Регистрация в Vaulty"}</h1>
           <p>
-            После авторизации ты попадаешь на главную страницу и можешь добавлять, редактировать
-            и шарить факты. Автором каждой новой записи автоматически становишься ты.
+            ${isLogin
+              ? "Войди в свой кабинет, чтобы продолжить работу с копилкой фактов и публиковать новые записи от своего логина."
+              : "Создай кабинет по имени, логину и паролю. После регистрации ты сразу попадешь в копилку фактов."}
           </p>
         </article>
 
         <article class="auth-panel">
-          <div class="panel-head">
-            <div>
-              <h3>Вход и регистрация</h3>
-              <div class="subtle">Новый кабинет создается на уже существующего участника команды.</div>
-            </div>
+          <div class="auth-switch" role="tablist" aria-label="Переключение между входом и регистрацией">
+            <button
+              class="auth-switch-button ${isLogin ? "is-active" : ""}"
+              type="button"
+              data-auth-mode="login"
+              role="tab"
+              aria-selected="${String(isLogin)}"
+            >
+              Вход
+            </button>
+            <button
+              class="auth-switch-button ${!isLogin ? "is-active" : ""}"
+              type="button"
+              data-auth-mode="register"
+              role="tab"
+              aria-selected="${String(!isLogin)}"
+            >
+              Регистрация
+            </button>
           </div>
 
           ${state.error ? `<div class="panel error-banner">${escapeHtml(state.error)}</div>` : ""}
           ${state.notice ? `<div class="panel notice-banner">${escapeHtml(state.notice)}</div>` : ""}
 
-          <div class="auth-grid">
-            <form id="login-form" class="stack auth-card">
-              <h4>Вход</h4>
-              <div class="field">
-                <label for="login-username">Логин</label>
-                <input id="login-username" name="username" type="text" value="${escapeHtml(state.authDraft.loginUsername)}" placeholder="например lev" />
-              </div>
-              <div class="field">
-                <label for="login-password">Пароль</label>
-                <input id="login-password" name="password" type="password" value="${escapeHtml(state.authDraft.loginPassword)}" placeholder="пароль" />
-              </div>
-              <div class="form-actions">
-                <button class="primary-button" type="submit">Войти</button>
-              </div>
-            </form>
-
-            <form id="register-form" class="stack auth-card">
-              <h4>Регистрация</h4>
-              <div class="field">
-                <label for="register-member">Я в команде как</label>
-                <select id="register-member" name="memberId" ${registerableMembers.length ? "" : "disabled"}>
-                  ${
-                    registerableMembers.length
-                      ? registerableMembers
-                          .map(
-                            (member) => `
-                              <option value="${member.id}" ${state.authDraft.registerMemberId === member.id ? "selected" : ""}>
-                                ${escapeHtml(member.name)}
-                              </option>
-                            `,
-                          )
-                          .join("")
-                      : '<option value="">Свободных профилей пока нет</option>'
-                  }
-                </select>
-              </div>
-              <div class="field">
-                <label for="register-username">Логин</label>
-                <input id="register-username" name="username" type="text" value="${escapeHtml(state.authDraft.registerUsername)}" placeholder="например lev" />
-              </div>
-              <div class="field">
-                <label for="register-password">Пароль</label>
-                <input id="register-password" name="password" type="password" value="${escapeHtml(state.authDraft.registerPassword)}" placeholder="минимум 6 символов" />
-              </div>
-              <div class="form-actions">
-                <button class="primary-button" type="submit" ${registerableMembers.length ? "" : "disabled"}>Создать кабинет</button>
-              </div>
-            </form>
+          <div class="auth-grid auth-grid--single">
+            ${
+              isLogin
+                ? `
+                  <form id="login-form" class="stack auth-card auth-card--single" autocomplete="on">
+                    <h3>Вход в аккаунт</h3>
+                    <div class="subtle auth-subcopy">Войди, чтобы продолжить работу с сохраненным прогрессом.</div>
+                    <div class="field">
+                      <label for="login-username">Логин</label>
+                      <input
+                        id="login-username"
+                        name="username"
+                        type="text"
+                        value="${escapeHtml(state.authDraft.loginUsername)}"
+                        placeholder="например lev"
+                        autocomplete="username"
+                        autocapitalize="none"
+                        spellcheck="false"
+                      />
+                    </div>
+                    <div class="field">
+                      <label for="login-password">Пароль</label>
+                      <input
+                        id="login-password"
+                        name="password"
+                        type="password"
+                        value="${escapeHtml(state.authDraft.loginPassword)}"
+                        placeholder="Минимум 6 символов"
+                        autocomplete="current-password"
+                      />
+                    </div>
+                    <label class="remember-row" for="login-remember">
+                      <input id="login-remember" name="rememberMe" type="checkbox" ${state.authDraft.loginRemember ? "checked" : ""} />
+                      <span>Запомнить меня</span>
+                    </label>
+                    <div class="form-actions">
+                      <button class="primary-button" type="submit">Войти</button>
+                    </div>
+                  </form>
+                `
+                : `
+                  <form id="register-form" class="stack auth-card auth-card--single" autocomplete="on">
+                    <h3>Создать аккаунт</h3>
+                    <div class="subtle auth-subcopy">После регистрации ты сразу попадешь в копилку фактов команды.</div>
+                    <div class="field">
+                      <label for="register-name">Имя</label>
+                      <input
+                        id="register-name"
+                        name="name"
+                        type="text"
+                        value="${escapeHtml(state.authDraft.registerName)}"
+                        placeholder="Как к тебе обращаться"
+                        autocomplete="name"
+                      />
+                    </div>
+                    <div class="field">
+                      <label for="register-username">Логин</label>
+                      <input
+                        id="register-username"
+                        name="username"
+                        type="text"
+                        value="${escapeHtml(state.authDraft.registerUsername)}"
+                        placeholder="например lev"
+                        autocomplete="username"
+                        autocapitalize="none"
+                        spellcheck="false"
+                      />
+                    </div>
+                    <div class="field">
+                      <label for="register-password">Пароль</label>
+                      <input
+                        id="register-password"
+                        name="password"
+                        type="password"
+                        value="${escapeHtml(state.authDraft.registerPassword)}"
+                        placeholder="Минимум 6 символов"
+                        autocomplete="new-password"
+                      />
+                    </div>
+                    <label class="remember-row" for="register-remember">
+                      <input id="register-remember" name="rememberMe" type="checkbox" ${state.authDraft.registerRemember ? "checked" : ""} />
+                      <span>Запомнить меня</span>
+                    </label>
+                    <div class="form-actions">
+                      <button class="primary-button" type="submit">Создать аккаунт</button>
+                    </div>
+                  </form>
+                `
+            }
           </div>
         </article>
       </section>
@@ -436,8 +489,8 @@ function renderAccountSummary(currentUser) {
       </div>
       <div class="account-badge">
         <div>
-          <strong>${escapeHtml(currentUser.memberName)}</strong>
-          <div class="subtle">@${escapeHtml(currentUser.username)}</div>
+          <strong>${escapeHtml(currentUser.name)} (${escapeHtml(currentUser.username)})</strong>
+          <div class="subtle">Авторство новых фактов автоматически закрепляется за этим кабинетом.</div>
         </div>
         <button class="ghost-button" type="button" id="logout-button">Выйти</button>
       </div>
@@ -466,7 +519,7 @@ function renderFactComposer(currentUser, canCreateFacts, members) {
       <div class="panel-head">
         <div>
           <h3>Новый факт</h3>
-          <div class="subtle">Автором факта автоматически станешь ты, как пользователь кабинета ${escapeHtml(currentUser.memberName)}.</div>
+          <div class="subtle">Пост публикуется от ${escapeHtml(currentUser.name)} (${escapeHtml(currentUser.username)}). Ниже ты выбираешь только того, к кому относится факт.</div>
         </div>
       </div>
 
@@ -584,7 +637,7 @@ function renderAdminPanel(currentUser, members) {
 }
 
 function renderFactCard(fact, currentUser) {
-  const canEdit = currentUser && fact.authorId === currentUser.memberId;
+  const canEdit = currentUser && [currentUser.id, currentUser.legacyMemberId].includes(fact.authorId);
   const isEditing = state.editingFactId === fact.id;
   const factUrl = getFactUrl(fact.id);
 
@@ -722,12 +775,28 @@ function bindEvents() {
 }
 
 function bindAuthEvents() {
+  document.querySelectorAll("[data-auth-mode]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const nextMode = button.dataset.authMode;
+      if (!nextMode || nextMode === state.authDraft.mode) {
+        return;
+      }
+      state.authDraft.mode = nextMode;
+      state.error = "";
+      render();
+    });
+  });
+
   document.querySelector("#login-username")?.addEventListener("input", (event) => {
     state.authDraft.loginUsername = event.target.value;
   });
 
   document.querySelector("#login-password")?.addEventListener("input", (event) => {
     state.authDraft.loginPassword = event.target.value;
+  });
+
+  document.querySelector("#login-remember")?.addEventListener("change", (event) => {
+    state.authDraft.loginRemember = event.target.checked;
   });
 
   document.querySelector("#login-form")?.addEventListener("submit", async (event) => {
@@ -738,6 +807,7 @@ function bindAuthEvents() {
         body: {
           username: state.authDraft.loginUsername.trim(),
           password: state.authDraft.loginPassword,
+          rememberMe: state.authDraft.loginRemember,
         },
       });
       state.authDraft.loginPassword = "";
@@ -749,16 +819,20 @@ function bindAuthEvents() {
     }
   });
 
-  document.querySelector("#register-member")?.addEventListener("change", (event) => {
-    state.authDraft.registerMemberId = event.target.value;
-  });
-
   document.querySelector("#register-username")?.addEventListener("input", (event) => {
     state.authDraft.registerUsername = event.target.value;
   });
 
+  document.querySelector("#register-name")?.addEventListener("input", (event) => {
+    state.authDraft.registerName = event.target.value;
+  });
+
   document.querySelector("#register-password")?.addEventListener("input", (event) => {
     state.authDraft.registerPassword = event.target.value;
+  });
+
+  document.querySelector("#register-remember")?.addEventListener("change", (event) => {
+    state.authDraft.registerRemember = event.target.checked;
   });
 
   document.querySelector("#register-form")?.addEventListener("submit", async (event) => {
@@ -767,12 +841,15 @@ function bindAuthEvents() {
       await apiRequest("/api/auth/register", {
         method: "POST",
         body: {
-          memberId: state.authDraft.registerMemberId,
+          name: state.authDraft.registerName.trim(),
           username: state.authDraft.registerUsername.trim(),
           password: state.authDraft.registerPassword,
+          rememberMe: state.authDraft.registerRemember,
         },
       });
       state.authDraft.loginUsername = state.authDraft.registerUsername.trim();
+      state.authDraft.loginRemember = state.authDraft.registerRemember;
+      state.authDraft.registerName = "";
       state.authDraft.registerUsername = "";
       state.authDraft.registerPassword = "";
       showNotice("Кабинет создан и вход выполнен.");
@@ -1254,7 +1331,6 @@ function emptyDashboard() {
     facts: [],
     members: [],
     leaderboard: [],
-    registerableMembers: [],
     currentUser: null,
     focusFactId: "",
     pagination: {
