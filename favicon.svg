@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="coin" x1="20%" y1="20%" x2="80%" y2="80%">
+      <stop offset="0%" stop-color="#fff2b9"/>
+      <stop offset="45%" stop-color="#e8c565"/>
+      <stop offset="100%" stop-color="#b9851f"/>
+    </linearGradient>
+    <linearGradient id="rim" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffe7a0"/>
+      <stop offset="100%" stop-color="#8c6115"/>
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="28" fill="#efe4d6"/>
+  <circle cx="64" cy="64" r="42" fill="url(#coin)" stroke="url(#rim)" stroke-width="8"/>
+  <circle cx="64" cy="64" r="28" fill="none" stroke="rgba(123,86,23,0.35)" stroke-width="4"/>
+  <path d="M47 46l17 40 17-40" fill="none" stroke="#7a5617" stroke-linecap="round" stroke-linejoin="round" stroke-width="8"/>
+  <circle cx="64" cy="64" r="4.5" fill="#7a5617"/>
+</svg>

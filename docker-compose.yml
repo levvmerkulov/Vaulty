@@ -1,0 +1,14 @@
+services:
+  vaulty:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: vaulty-app
+    ports:
+      - "8080:8000"
+    restart: unless-stopped
+    volumes:
+      - vaulty_data:/app/data
+
+volumes:
+  vaulty_data:

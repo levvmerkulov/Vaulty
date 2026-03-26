@@ -1,0 +1,14 @@
+.DS_Store
+.git
+.gigaide
+.idea
+.venv
+node_modules
+dist
+data
+__pycache__
+*.pyc
+README.md
+start.command
+stop.command
+Vaulty.iml

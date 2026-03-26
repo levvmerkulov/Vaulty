@@ -1,0 +1,10 @@
+.DS_Store
+.gigaide/
+.idea/
+.venv/
+node_modules/
+dist/
+data/
+__pycache__/
+*.pyc
+*.iml
