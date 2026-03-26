@@ -1,5 +1,4 @@
 const PAGE_SIZE = 30;
-const USER_PREFS_KEY = "vaulty-current-user-v2";
 
 const state = {
   detailsOpen: false,
@@ -23,17 +22,23 @@ const state = {
     text: "",
     tags: "",
   },
+  authDraft: {
+    loginUsername: "",
+    loginPassword: "",
+    registerMemberId: "",
+    registerUsername: "",
+    registerPassword: "",
+  },
   adminDraft: {
     name: "",
   },
   dashboard: null,
-  currentUserId: loadCurrentUserId(),
   focusFactId: getFactIdFromUrl(),
   editingFactId: "",
   voice: {
     supported: getSpeechRecognitionClass() !== null,
     listening: false,
-    saving: false,
+    loading: false,
     status: "",
     transcript: "",
   },
@@ -90,14 +95,19 @@ async function loadDashboard() {
       state.draft.memberId = activeMember?.id || "";
     }
 
-    const currentUserExists = payload.members.some((member) => member.id === state.currentUserId && member.inTeam);
-    if (!currentUserExists) {
-      state.currentUserId = payload.currentUserFallbackId || activeMember?.id || "";
-      persistCurrentUserId(state.currentUserId);
+    const registerableExists = payload.registerableMembers.some(
+      (member) => member.id === state.authDraft.registerMemberId,
+    );
+    if (!registerableExists) {
+      state.authDraft.registerMemberId = payload.registerableMembers[0]?.id || "";
     }
 
     if (payload.focusFactId) {
       state.detailsOpen = true;
+    }
+
+    if (!payload.currentUser) {
+      state.editingFactId = "";
     }
   } catch (error) {
     state.error = error.message || "Не удалось загрузить данные.";
@@ -116,7 +126,7 @@ function render() {
             <div class="brand">
               <span class="eyebrow">Vaulty · копилка фактов команды</span>
               <h1>Факты, которые делают команду живой.</h1>
-              <p>Поднимаю копилку, факты и состав команды...</p>
+              <p>Поднимаю копилку, факты и личные кабинеты...</p>
             </div>
           </article>
           <section class="hero-stage">
@@ -129,10 +139,10 @@ function render() {
   }
 
   const dashboard = state.dashboard || emptyDashboard();
+  const currentUser = dashboard.currentUser;
   const membersInTeam = dashboard.members.filter((member) => member.inTeam).length;
   const topMember = dashboard.leaderboard.find((member) => member.count > 0);
   const pagination = dashboard.pagination;
-  const currentUser = dashboard.members.find((member) => member.id === state.currentUserId && member.inTeam);
   const canCreateFacts = Boolean(currentUser) && dashboard.members.some((member) => member.inTeam);
 
   app.innerHTML = `
@@ -144,7 +154,7 @@ function render() {
             <h1>Факты, которые делают команду живой.</h1>
             <p>
               Здесь можно складывать смешные, полезные и немного кринжовые наблюдения из рабочих разговоров,
-              быстро находить нужный факт, редактировать свои записи и делиться прямой ссылкой на каждую из них.
+              заходить в свой кабинет, редактировать собственные факты и делиться прямой ссылкой на каждую запись.
             </p>
           </div>
 
@@ -304,9 +314,7 @@ function render() {
             <div class="facts">
               ${
                 dashboard.facts.length
-                  ? dashboard.facts
-                      .map((fact) => renderFactCard(fact))
-                      .join("")
+                  ? dashboard.facts.map((fact) => renderFactCard(fact, currentUser)).join("")
                   : '<div class="empty-state">Под эти фильтры пока ничего не нашлось. Попробуй убрать часть условий или добавить новый факт.</div>'
               }
             </div>
@@ -319,134 +327,9 @@ function render() {
           </section>
 
           <section class="stack">
-            <article class="panel">
-              <div class="panel-head">
-                <div>
-                  <h3>Новый факт</h3>
-                  <div class="subtle">Выбираешь себя, выбираешь участника, вводишь текст или диктуешь голосом.</div>
-                </div>
-              </div>
-
-              <form id="fact-form" class="stack">
-                <div class="field">
-                  <label for="current-user">Я сейчас как</label>
-                  <select id="current-user" ${dashboard.members.every((member) => !member.inTeam) ? "disabled" : ""}>
-                    ${dashboard.members
-                      .filter((member) => member.inTeam)
-                      .map(
-                        (member) => `
-                          <option value="${member.id}" ${state.currentUserId === member.id ? "selected" : ""}>
-                            ${escapeHtml(member.name)}
-                          </option>
-                        `,
-                      )
-                      .join("")}
-                  </select>
-                </div>
-
-                <div class="field">
-                  <label for="member">Кто сказал или принес факт</label>
-                  <select id="member" name="memberId" ${!canCreateFacts ? "disabled" : ""}>
-                    ${dashboard.members
-                      .filter((member) => member.inTeam)
-                      .map(
-                        (member) => `
-                          <option value="${member.id}" ${state.draft.memberId === member.id ? "selected" : ""}>
-                            ${escapeHtml(member.name)}
-                          </option>
-                        `,
-                      )
-                      .join("")}
-                  </select>
-                </div>
-
-                <div class="field">
-                  <label for="fact-text">Факт</label>
-                  <textarea id="fact-text" name="text" placeholder="Например: всегда называет самые сложные баги по имени.">${escapeHtml(state.draft.text)}</textarea>
-                </div>
-
-                <div class="field">
-                  <label for="fact-tags">Теги</label>
-                  <input id="fact-tags" name="tags" type="text" value="${escapeHtml(state.draft.tags)}" placeholder="забавно, полезно, кринж" />
-                </div>
-
-                <div class="voice-box ${state.voice.listening ? "is-live" : ""}">
-                  <div>
-                    <strong>Голосовой ввод</strong>
-                    <div class="subtle">
-                      ${
-                        state.voice.supported
-                          ? "Можно надиктовать длинную мысль, а приложение само сократит ее до короткого факта и подберет теги."
-                          : "В этом браузере нет встроенного распознавания речи. Попробуй Chrome или Safari."
-                      }
-                    </div>
-                    ${state.voice.status ? `<div class="voice-status">${escapeHtml(state.voice.status)}</div>` : ""}
-                    ${state.voice.transcript ? `<div class="voice-transcript">${escapeHtml(state.voice.transcript)}</div>` : ""}
-                  </div>
-                  <button class="ghost-button" type="button" id="voice-capture" ${!state.voice.supported || !canCreateFacts || state.voice.saving ? "disabled" : ""}>
-                    ${state.voice.listening ? "Слушаю..." : state.voice.saving ? "Сохраняю..." : "Надиктовать голосом"}
-                  </button>
-                </div>
-
-                <div class="form-actions">
-                  <button class="primary-button" type="submit" ${!canCreateFacts ? "disabled" : ""}>Добавить в копилку</button>
-                  <button class="ghost-button" type="button" id="fill-demo">Заполнить примером</button>
-                </div>
-              </form>
-            </article>
-
-            <article class="panel">
-              <div class="panel-head">
-                <div>
-                  <h3>Админ-панель</h3>
-                  <div class="subtle">Можно переименовывать, переключать статус и удалять участника, не теряя его факты.</div>
-                </div>
-              </div>
-
-              <div class="participant-list">
-                ${dashboard.members
-                  .map(
-                    (member) => `
-                      <div class="participant-row">
-                        <div class="participant-meta">
-                          <span class="leader-dot" style="background:${member.color}"></span>
-                          <input
-                            type="text"
-                            value="${escapeHtml(member.name)}"
-                            aria-label="Имя участника"
-                            data-member-input="${member.id}"
-                          />
-                        </div>
-                        <div class="participant-actions">
-                          <button class="toggle-button ${member.inTeam ? "" : "is-off"}" data-toggle-member="${member.id}" data-in-team="${member.inTeam}">
-                            ${member.inTeam ? "В команде" : "Не в команде"}
-                          </button>
-                          <button class="danger-button" data-delete-member="${member.id}" data-member-name="${escapeHtml(member.name)}">
-                            Удалить
-                          </button>
-                        </div>
-                        <span class="participant-note">${member.factCount} фактов за все время</span>
-                      </div>
-                    `,
-                  )
-                  .join("")}
-              </div>
-
-              <form id="member-form" class="stack" style="margin-top:18px;">
-                <div class="field">
-                  <label for="member-name">Новый участник</label>
-                  <input id="member-name" name="name" type="text" value="${escapeHtml(state.adminDraft.name)}" placeholder="Например: Дима" />
-                </div>
-
-                <div class="form-actions">
-                  <button class="primary-button" type="submit">Добавить в команду</button>
-                </div>
-              </form>
-
-              <div class="footer-note">
-                Удаление участника скрывает его из состава, но все его прошлые факты остаются в истории, поиске и по прямым ссылкам.
-              </div>
-            </article>
+            ${renderAccountPanel(currentUser, dashboard.registerableMembers)}
+            ${renderFactComposer(currentUser, canCreateFacts, dashboard.members)}
+            ${renderAdminPanel(currentUser, dashboard.members)}
           </section>
         </div>
       </section>
@@ -457,8 +340,229 @@ function render() {
   maybeScrollToFocusedFact();
 }
 
-function renderFactCard(fact) {
-  const canEdit = fact.authorId === state.currentUserId;
+function renderAccountPanel(currentUser, registerableMembers) {
+  if (currentUser) {
+    return `
+      <article class="panel">
+        <div class="panel-head">
+          <div>
+            <h3>Личный кабинет</h3>
+            <div class="subtle">Ты автор всех фактов, которые создаешь из этой сессии.</div>
+          </div>
+        </div>
+        <div class="account-badge">
+          <div>
+            <strong>${escapeHtml(currentUser.memberName)}</strong>
+            <div class="subtle">@${escapeHtml(currentUser.username)}</div>
+          </div>
+          <button class="ghost-button" type="button" id="logout-button">Выйти</button>
+        </div>
+      </article>
+    `;
+  }
+
+  return `
+    <article class="panel">
+      <div class="panel-head">
+        <div>
+          <h3>Вход и регистрация</h3>
+          <div class="subtle">Зайди в свой кабинет, и тогда все новые факты автоматически будут привязаны к тебе.</div>
+        </div>
+      </div>
+
+      <div class="auth-grid">
+        <form id="login-form" class="stack auth-card">
+          <h4>Вход</h4>
+          <div class="field">
+            <label for="login-username">Логин</label>
+            <input id="login-username" name="username" type="text" value="${escapeHtml(state.authDraft.loginUsername)}" placeholder="например lev" />
+          </div>
+          <div class="field">
+            <label for="login-password">Пароль</label>
+            <input id="login-password" name="password" type="password" value="${escapeHtml(state.authDraft.loginPassword)}" placeholder="пароль" />
+          </div>
+          <div class="form-actions">
+            <button class="primary-button" type="submit">Войти</button>
+          </div>
+        </form>
+
+        <form id="register-form" class="stack auth-card">
+          <h4>Регистрация</h4>
+          <div class="field">
+            <label for="register-member">Я в команде как</label>
+            <select id="register-member" name="memberId" ${registerableMembers.length ? "" : "disabled"}>
+              ${
+                registerableMembers.length
+                  ? registerableMembers
+                      .map(
+                        (member) => `
+                          <option value="${member.id}" ${state.authDraft.registerMemberId === member.id ? "selected" : ""}>
+                            ${escapeHtml(member.name)}
+                          </option>
+                        `,
+                      )
+                      .join("")
+                  : '<option value="">Свободных профилей пока нет</option>'
+              }
+            </select>
+          </div>
+          <div class="field">
+            <label for="register-username">Логин</label>
+            <input id="register-username" name="username" type="text" value="${escapeHtml(state.authDraft.registerUsername)}" placeholder="например lev" />
+          </div>
+          <div class="field">
+            <label for="register-password">Пароль</label>
+            <input id="register-password" name="password" type="password" value="${escapeHtml(state.authDraft.registerPassword)}" placeholder="минимум 6 символов" />
+          </div>
+          <div class="form-actions">
+            <button class="primary-button" type="submit" ${registerableMembers.length ? "" : "disabled"}>Создать кабинет</button>
+          </div>
+        </form>
+      </div>
+    </article>
+  `;
+}
+
+function renderFactComposer(currentUser, canCreateFacts, members) {
+  const teamMembers = members.filter((member) => member.inTeam);
+  if (!currentUser) {
+    return `
+      <article class="panel">
+        <div class="panel-head">
+          <div>
+            <h3>Новый факт</h3>
+            <div class="subtle">Добавление фактов откроется после входа в личный кабинет.</div>
+          </div>
+        </div>
+        <div class="empty-state">Сначала войди или зарегистрируйся, чтобы создавать факты от своего имени.</div>
+      </article>
+    `;
+  }
+
+  return `
+    <article class="panel">
+      <div class="panel-head">
+        <div>
+          <h3>Новый факт</h3>
+          <div class="subtle">Автором факта автоматически станешь ты, как пользователь кабинета ${escapeHtml(currentUser.memberName)}.</div>
+        </div>
+      </div>
+
+      <form id="fact-form" class="stack">
+        <div class="field">
+          <label for="member">Кто сказал или принес факт</label>
+          <select id="member" name="memberId" ${!canCreateFacts ? "disabled" : ""}>
+            ${teamMembers
+              .map(
+                (member) => `
+                  <option value="${member.id}" ${state.draft.memberId === member.id ? "selected" : ""}>
+                    ${escapeHtml(member.name)}
+                  </option>
+                `,
+              )
+              .join("")}
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="fact-text">Факт</label>
+          <textarea id="fact-text" name="text" placeholder="Например: всегда называет самые сложные баги по имени.">${escapeHtml(state.draft.text)}</textarea>
+        </div>
+
+        <div class="field">
+          <label for="fact-tags">Теги</label>
+          <input id="fact-tags" name="tags" type="text" value="${escapeHtml(state.draft.tags)}" placeholder="забавно, полезно, кринж" />
+        </div>
+
+        <div class="voice-box ${state.voice.listening ? "is-live" : ""}">
+          <div>
+            <strong>Голосовой ввод</strong>
+            <div class="subtle">
+              ${
+                state.voice.supported
+                  ? "Надиктуй длинную мысль, я сокращу ее в короткий черновик с тегами. Отправка произойдет только после нажатия на кнопку отправки."
+                  : "В этом браузере нет встроенного распознавания речи. Лучше всего попробовать Chrome или Safari."
+              }
+            </div>
+            ${state.voice.status ? `<div class="voice-status">${escapeHtml(state.voice.status)}</div>` : ""}
+            ${state.voice.transcript ? `<div class="voice-transcript">${escapeHtml(state.voice.transcript)}</div>` : ""}
+          </div>
+          <button class="ghost-button" type="button" id="voice-capture" ${!state.voice.supported || state.voice.loading ? "disabled" : ""}>
+            ${state.voice.listening ? "Остановить" : state.voice.loading ? "Суммаризирую..." : "Надиктовать голосом"}
+          </button>
+        </div>
+
+        <div class="form-actions">
+          <button class="primary-button" type="submit" ${!canCreateFacts ? "disabled" : ""}>Отправить</button>
+          <button class="ghost-button" type="button" id="fill-demo">Заполнить примером</button>
+        </div>
+      </form>
+    </article>
+  `;
+}
+
+function renderAdminPanel(currentUser, members) {
+  if (!currentUser) {
+    return "";
+  }
+
+  return `
+    <article class="panel">
+      <div class="panel-head">
+        <div>
+          <h3>Админ-панель</h3>
+          <div class="subtle">Можно переименовывать, переключать статус и удалять участника, не теряя его факты.</div>
+        </div>
+      </div>
+
+      <div class="participant-list">
+        ${members
+          .map(
+            (member) => `
+              <div class="participant-row">
+                <div class="participant-meta">
+                  <span class="leader-dot" style="background:${member.color}"></span>
+                  <input
+                    type="text"
+                    value="${escapeHtml(member.name)}"
+                    aria-label="Имя участника"
+                    data-member-input="${member.id}"
+                  />
+                </div>
+                <div class="participant-actions">
+                  <button class="toggle-button ${member.inTeam ? "" : "is-off"}" data-toggle-member="${member.id}" data-in-team="${member.inTeam}">
+                    ${member.inTeam ? "В команде" : "Не в команде"}
+                  </button>
+                  <button class="danger-button" data-delete-member="${member.id}" data-member-name="${escapeHtml(member.name)}">
+                    Удалить
+                  </button>
+                </div>
+                <span class="participant-note">${member.factCount} фактов за все время</span>
+              </div>
+            `,
+          )
+          .join("")}
+      </div>
+
+      <form id="member-form" class="stack" style="margin-top:18px;">
+        <div class="field">
+          <label for="member-name">Новый участник</label>
+          <input id="member-name" name="name" type="text" value="${escapeHtml(state.adminDraft.name)}" placeholder="Например: Дима" />
+        </div>
+        <div class="form-actions">
+          <button class="primary-button" type="submit">Добавить в команду</button>
+        </div>
+      </form>
+
+      <div class="footer-note">
+        Удаление участника скрывает его из состава, но все его прошлые факты остаются в истории, поиске и по прямым ссылкам.
+      </div>
+    </article>
+  `;
+}
+
+function renderFactCard(fact, currentUser) {
+  const canEdit = currentUser && fact.authorId === currentUser.memberId;
   const isEditing = state.editingFactId === fact.id;
   const factUrl = getFactUrl(fact.id);
 
@@ -590,16 +694,91 @@ function bindEvents() {
     });
   });
 
-  document.querySelector("#current-user")?.addEventListener("change", (event) => {
-    state.currentUserId = event.target.value;
-    persistCurrentUserId(state.currentUserId);
-    if (state.editingFactId) {
-      cancelEdit();
-    } else {
+  bindAuthEvents();
+  bindFactEvents();
+  bindAdminEvents();
+}
+
+function bindAuthEvents() {
+  document.querySelector("#login-username")?.addEventListener("input", (event) => {
+    state.authDraft.loginUsername = event.target.value;
+  });
+
+  document.querySelector("#login-password")?.addEventListener("input", (event) => {
+    state.authDraft.loginPassword = event.target.value;
+  });
+
+  document.querySelector("#login-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      await apiRequest("/api/auth/login", {
+        method: "POST",
+        body: {
+          username: state.authDraft.loginUsername.trim(),
+          password: state.authDraft.loginPassword,
+        },
+      });
+      state.authDraft.loginPassword = "";
+      showNotice("Вход выполнен.");
+      await loadDashboard();
+    } catch (error) {
+      state.error = error.message;
       render();
     }
   });
 
+  document.querySelector("#register-member")?.addEventListener("change", (event) => {
+    state.authDraft.registerMemberId = event.target.value;
+  });
+
+  document.querySelector("#register-username")?.addEventListener("input", (event) => {
+    state.authDraft.registerUsername = event.target.value;
+  });
+
+  document.querySelector("#register-password")?.addEventListener("input", (event) => {
+    state.authDraft.registerPassword = event.target.value;
+  });
+
+  document.querySelector("#register-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      await apiRequest("/api/auth/register", {
+        method: "POST",
+        body: {
+          memberId: state.authDraft.registerMemberId,
+          username: state.authDraft.registerUsername.trim(),
+          password: state.authDraft.registerPassword,
+        },
+      });
+      state.authDraft.loginUsername = state.authDraft.registerUsername.trim();
+      state.authDraft.registerUsername = "";
+      state.authDraft.registerPassword = "";
+      showNotice("Кабинет создан и вход выполнен.");
+      await loadDashboard();
+    } catch (error) {
+      state.error = error.message;
+      render();
+    }
+  });
+
+  document.querySelector("#logout-button")?.addEventListener("click", async () => {
+    try {
+      await apiRequest("/api/auth/logout", {
+        method: "POST",
+      });
+      state.editingFactId = "";
+      state.voice.status = "";
+      state.voice.transcript = "";
+      showNotice("Ты вышел из кабинета.");
+      await loadDashboard();
+    } catch (error) {
+      state.error = error.message;
+      render();
+    }
+  });
+}
+
+function bindFactEvents() {
   document.querySelector("#member")?.addEventListener("change", (event) => {
     state.draft.memberId = event.target.value;
   });
@@ -632,12 +811,10 @@ function bindEvents() {
     event.preventDefault();
     const payload = {
       memberId: state.draft.memberId,
-      authorId: state.currentUserId,
       text: state.draft.text.trim(),
       tags: parseTags(state.draft.tags),
     };
-
-    if (!payload.memberId || !payload.authorId || !payload.text) {
+    if (!payload.memberId || !payload.text) {
       return;
     }
 
@@ -690,7 +867,6 @@ function bindEvents() {
         await apiRequest(`/api/facts/${factId}`, {
           method: "PATCH",
           body: {
-            editorId: state.currentUserId,
             text: state.editDraft.text.trim(),
             tags: parseTags(state.editDraft.tags),
           },
@@ -707,7 +883,10 @@ function bindEvents() {
 
   document.querySelectorAll("[data-cancel-edit]").forEach((button) => {
     button.addEventListener("click", () => {
-      cancelEdit();
+      state.editingFactId = "";
+      state.editDraft.text = "";
+      state.editDraft.tags = "";
+      render();
     });
   });
 
@@ -717,19 +896,20 @@ function bindEvents() {
       try {
         await copyToClipboard(factUrl);
         showNotice("Ссылка на факт скопирована.");
-      } catch (error) {
+      } catch (_error) {
         state.error = "Не удалось скопировать ссылку.";
         render();
       }
     });
   });
+}
 
+function bindAdminEvents() {
   document.querySelectorAll("[data-member-input]").forEach((input) => {
     input.addEventListener("blur", async () => {
       const memberId = input.dataset.memberInput;
       const nextName = input.value.trim();
       const currentMember = state.dashboard?.members.find((member) => member.id === memberId);
-
       if (!memberId || !nextName || !currentMember || currentMember.name === nextName) {
         render();
         return;
@@ -752,7 +932,6 @@ function bindEvents() {
     button.addEventListener("click", async () => {
       const memberId = button.dataset.toggleMember;
       const inTeam = button.dataset.inTeam === "true";
-
       try {
         await apiRequest(`/api/members/${memberId}`, {
           method: "PATCH",
@@ -820,8 +999,8 @@ async function startVoiceCapture() {
     return;
   }
 
-  if (!state.currentUserId || !state.draft.memberId) {
-    state.error = "Сначала выбери себя и участника, для которого сохраняется факт.";
+  if (!state.draft.memberId) {
+    state.error = "Сначала выбери участника, для которого готовится факт.";
     render();
     return;
   }
@@ -837,8 +1016,8 @@ async function startVoiceCapture() {
 
   recognition.onstart = () => {
     state.voice.listening = true;
-    state.voice.saving = false;
-    state.voice.status = "Слушаю. Можно говорить свободно, я потом сокращу это до короткого факта.";
+    state.voice.loading = false;
+    state.voice.status = "Слушаю. Можно говорить свободно, я соберу это в короткий черновик.";
     state.voice.transcript = "";
     render();
   };
@@ -854,8 +1033,9 @@ async function startVoiceCapture() {
   };
 
   recognition.onerror = (event) => {
+    activeRecognition = null;
     state.voice.listening = false;
-    state.voice.saving = false;
+    state.voice.loading = false;
     state.voice.status = "";
     state.error = event.error === "not-allowed" ? "Браузер не получил доступ к микрофону." : "Не удалось распознать голос.";
     render();
@@ -865,69 +1045,35 @@ async function startVoiceCapture() {
     activeRecognition = null;
     state.voice.listening = false;
     if (!transcript) {
-      state.voice.saving = false;
+      state.voice.loading = false;
       state.voice.status = "Ничего не удалось распознать. Попробуй еще раз.";
       render();
       return;
     }
 
-    state.voice.saving = true;
-    state.voice.status = "Суммаризирую и сохраняю факт...";
+    state.voice.loading = true;
+    state.voice.status = "Суммаризирую в черновик...";
     render();
 
     try {
-      await apiRequest("/api/facts/dictate", {
+      const result = await apiRequest("/api/facts/summarize", {
         method: "POST",
-        body: {
-          authorId: state.currentUserId,
-          memberId: state.draft.memberId,
-          transcript,
-        },
+        body: { transcript },
       });
-      state.voice.status = "";
-      state.voice.transcript = "";
-      state.voice.saving = false;
-      state.detailsOpen = true;
-      state.filters.page = 1;
-      showNotice("Голосовой факт сохранен.");
-      await loadDashboard();
+      state.draft.text = result.summary;
+      state.draft.tags = result.tags.join(", ");
+      state.voice.transcript = result.transcript;
+      state.voice.loading = false;
+      state.voice.status = "Черновик готов. Проверь формулировку и нажми отправить, когда будешь готов.";
+      showNotice("Черновик факта обновлен из голосовой заметки.");
     } catch (error) {
-      state.voice.saving = false;
+      state.voice.loading = false;
       state.error = error.message;
       render();
     }
   };
 
   recognition.start();
-}
-
-function cancelEdit() {
-  state.editingFactId = "";
-  state.editDraft.text = "";
-  state.editDraft.tags = "";
-  render();
-}
-
-function clearFocusFact() {
-  if (!state.focusFactId) {
-    return;
-  }
-  state.focusFactId = "";
-  const url = new URL(window.location.href);
-  url.searchParams.delete("fact");
-  window.history.replaceState({}, "", url);
-}
-
-function maybeScrollToFocusedFact() {
-  if (!state.focusFactId) {
-    return;
-  }
-  requestAnimationFrame(() => {
-    const element = document.getElementById(`fact-${state.focusFactId}`);
-    if (element) {
-      element.scrollIntoView({ behavior: "smooth", block: "center" });
-    }
-  });
 }
 
 async function apiRequest(url, options = {}) {
@@ -973,6 +1119,13 @@ function showNotice(message) {
   render();
 }
 
+function renderMemberBadge(member) {
+  if (member.deleted) {
+    return '<span class="leader-status">удален</span>';
+  }
+  return `<span class="leader-status">${member.inTeam ? "в команде" : "не в команде"}</span>`;
+}
+
 function getFactUrl(factId) {
   const url = new URL(window.location.href);
   url.searchParams.set("fact", factId);
@@ -988,24 +1141,26 @@ function getFactIdFromUrl() {
   }
 }
 
-function loadCurrentUserId() {
-  try {
-    return localStorage.getItem(USER_PREFS_KEY) || "";
-  } catch (_error) {
-    return "";
-  }
-}
-
-function persistCurrentUserId(memberId) {
-  try {
-    if (memberId) {
-      localStorage.setItem(USER_PREFS_KEY, memberId);
-    } else {
-      localStorage.removeItem(USER_PREFS_KEY);
-    }
-  } catch (_error) {
+function clearFocusFact() {
+  if (!state.focusFactId) {
     return;
   }
+  state.focusFactId = "";
+  const url = new URL(window.location.href);
+  url.searchParams.delete("fact");
+  window.history.replaceState({}, "", url);
+}
+
+function maybeScrollToFocusedFact() {
+  if (!state.focusFactId) {
+    return;
+  }
+  requestAnimationFrame(() => {
+    const element = document.getElementById(`fact-${state.focusFactId}`);
+    if (element) {
+      element.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  });
 }
 
 function getSpeechRecognitionClass() {
@@ -1019,13 +1174,6 @@ function parseTags(input) {
       .map((tag) => tag.trim().toLowerCase())
       .filter(Boolean),
   )];
-}
-
-function renderMemberBadge(member) {
-  if (member.deleted) {
-    return '<span class="leader-status">удален</span>';
-  }
-  return `<span class="leader-status">${member.inTeam ? "в команде" : "не в команде"}</span>`;
 }
 
 function getScopeLabel(filters) {
@@ -1084,7 +1232,8 @@ function emptyDashboard() {
     facts: [],
     members: [],
     leaderboard: [],
-    currentUserFallbackId: "",
+    registerableMembers: [],
+    currentUser: null,
     focusFactId: "",
     pagination: {
       page: 1,
