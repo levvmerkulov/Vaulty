@@ -67,6 +67,62 @@ button {
   padding: 28px 24px 72px;
 }
 
+.auth-shell {
+  position: relative;
+  z-index: 1;
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 28px 24px;
+}
+
+.auth-hero {
+  width: min(100%, 1120px);
+  display: grid;
+  grid-template-columns: minmax(320px, 0.9fr) minmax(360px, 1.1fr);
+  gap: 28px;
+  align-items: stretch;
+}
+
+.auth-copy,
+.auth-panel {
+  backdrop-filter: blur(20px);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+  border-radius: var(--radius-xl);
+}
+
+.auth-copy {
+  padding: 34px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 16px;
+}
+
+.auth-copy h1 {
+  margin: 0;
+  max-width: 11ch;
+  font-family: "Avenir Next", "Helvetica Neue", "Segoe UI", sans-serif;
+  font-size: clamp(2.8rem, 6vw, 5rem);
+  line-height: 0.94;
+  font-weight: 800;
+  letter-spacing: -0.07em;
+}
+
+.auth-copy p {
+  margin: 0;
+  max-width: 32rem;
+  color: var(--muted);
+  line-height: 1.65;
+  font-size: 1.04rem;
+}
+
+.auth-panel {
+  padding: 24px;
+}
+
 .hero {
   display: grid;
   grid-template-columns: minmax(320px, 1.05fr) minmax(280px, 0.95fr);
@@ -870,7 +926,8 @@ button {
 @media (max-width: 1080px) {
   .hero,
   .workspace-grid,
-  .panel-grid {
+  .panel-grid,
+  .auth-hero {
     grid-template-columns: 1fr;
   }
 

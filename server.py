@@ -441,6 +441,28 @@ def get_focus_page(items, fact_id, page_size):
 
 
 def dashboard_payload(query_params, current_user):
+    with get_connection() as connection:
+        registerable_members = get_registerable_members(connection)
+        if current_user is None:
+            return {
+                "totalFacts": 0,
+                "filteredTotal": 0,
+                "tags": [],
+                "facts": [],
+                "members": [],
+                "leaderboard": [],
+                "registerableMembers": registerable_members,
+                "currentUser": None,
+                "focusFactId": "",
+                "pagination": {
+                    "page": 1,
+                    "totalPages": 1,
+                    "totalItems": 0,
+                    "startItem": 0,
+                    "endItem": 0,
+                },
+            }
+
     scope = query_params.get("scope", ["total"])[0]
     week = query_params.get("week", [get_week_value(datetime.now().astimezone())])[0]
     day_value = query_params.get("day", [date.today().isoformat()])[0]
@@ -454,7 +476,6 @@ def dashboard_payload(query_params, current_user):
         members = get_members(connection, include_deleted=False)
         all_members = get_members(connection, include_deleted=True)
         facts = get_facts(connection)
-        registerable_members = get_registerable_members(connection)
 
     if focus_fact_id and any(fact["id"] == focus_fact_id for fact in facts):
         filtered_facts = facts

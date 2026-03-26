@@ -140,10 +140,16 @@ function render() {
 
   const dashboard = state.dashboard || emptyDashboard();
   const currentUser = dashboard.currentUser;
+  if (!currentUser) {
+    app.innerHTML = renderAuthPage(dashboard.registerableMembers);
+    bindAuthEvents();
+    return;
+  }
+
   const membersInTeam = dashboard.members.filter((member) => member.inTeam).length;
   const topMember = dashboard.leaderboard.find((member) => member.count > 0);
   const pagination = dashboard.pagination;
-  const canCreateFacts = Boolean(currentUser) && dashboard.members.some((member) => member.inTeam);
+  const canCreateFacts = dashboard.members.some((member) => member.inTeam);
 
   app.innerHTML = `
     <main class="shell">
@@ -327,7 +333,7 @@ function render() {
           </section>
 
           <section class="stack">
-            ${renderAccountPanel(currentUser, dashboard.registerableMembers)}
+            ${renderAccountSummary(currentUser)}
             ${renderFactComposer(currentUser, canCreateFacts, dashboard.members)}
             ${renderAdminPanel(currentUser, dashboard.members)}
           </section>
@@ -340,84 +346,100 @@ function render() {
   maybeScrollToFocusedFact();
 }
 
-function renderAccountPanel(currentUser, registerableMembers) {
-  if (currentUser) {
-    return `
-      <article class="panel">
-        <div class="panel-head">
-          <div>
-            <h3>Личный кабинет</h3>
-            <div class="subtle">Ты автор всех фактов, которые создаешь из этой сессии.</div>
-          </div>
-        </div>
-        <div class="account-badge">
-          <div>
-            <strong>${escapeHtml(currentUser.memberName)}</strong>
-            <div class="subtle">@${escapeHtml(currentUser.username)}</div>
-          </div>
-          <button class="ghost-button" type="button" id="logout-button">Выйти</button>
-        </div>
-      </article>
-    `;
-  }
+function renderAuthPage(registerableMembers) {
+  return `
+    <main class="auth-shell">
+      <section class="auth-hero">
+        <article class="auth-copy">
+          <span class="eyebrow">Vaulty · копилка фактов команды</span>
+          <h1>Сначала войди в кабинет, потом работай с фактами.</h1>
+          <p>
+            После авторизации ты попадаешь на главную страницу и можешь добавлять, редактировать
+            и шарить факты. Автором каждой новой записи автоматически становишься ты.
+          </p>
+        </article>
 
+        <article class="auth-panel">
+          <div class="panel-head">
+            <div>
+              <h3>Вход и регистрация</h3>
+              <div class="subtle">Новый кабинет создается на уже существующего участника команды.</div>
+            </div>
+          </div>
+
+          ${state.error ? `<div class="panel error-banner">${escapeHtml(state.error)}</div>` : ""}
+          ${state.notice ? `<div class="panel notice-banner">${escapeHtml(state.notice)}</div>` : ""}
+
+          <div class="auth-grid">
+            <form id="login-form" class="stack auth-card">
+              <h4>Вход</h4>
+              <div class="field">
+                <label for="login-username">Логин</label>
+                <input id="login-username" name="username" type="text" value="${escapeHtml(state.authDraft.loginUsername)}" placeholder="например lev" />
+              </div>
+              <div class="field">
+                <label for="login-password">Пароль</label>
+                <input id="login-password" name="password" type="password" value="${escapeHtml(state.authDraft.loginPassword)}" placeholder="пароль" />
+              </div>
+              <div class="form-actions">
+                <button class="primary-button" type="submit">Войти</button>
+              </div>
+            </form>
+
+            <form id="register-form" class="stack auth-card">
+              <h4>Регистрация</h4>
+              <div class="field">
+                <label for="register-member">Я в команде как</label>
+                <select id="register-member" name="memberId" ${registerableMembers.length ? "" : "disabled"}>
+                  ${
+                    registerableMembers.length
+                      ? registerableMembers
+                          .map(
+                            (member) => `
+                              <option value="${member.id}" ${state.authDraft.registerMemberId === member.id ? "selected" : ""}>
+                                ${escapeHtml(member.name)}
+                              </option>
+                            `,
+                          )
+                          .join("")
+                      : '<option value="">Свободных профилей пока нет</option>'
+                  }
+                </select>
+              </div>
+              <div class="field">
+                <label for="register-username">Логин</label>
+                <input id="register-username" name="username" type="text" value="${escapeHtml(state.authDraft.registerUsername)}" placeholder="например lev" />
+              </div>
+              <div class="field">
+                <label for="register-password">Пароль</label>
+                <input id="register-password" name="password" type="password" value="${escapeHtml(state.authDraft.registerPassword)}" placeholder="минимум 6 символов" />
+              </div>
+              <div class="form-actions">
+                <button class="primary-button" type="submit" ${registerableMembers.length ? "" : "disabled"}>Создать кабинет</button>
+              </div>
+            </form>
+          </div>
+        </article>
+      </section>
+    </main>
+  `;
+}
+
+function renderAccountSummary(currentUser) {
   return `
     <article class="panel">
       <div class="panel-head">
         <div>
-          <h3>Вход и регистрация</h3>
-          <div class="subtle">Зайди в свой кабинет, и тогда все новые факты автоматически будут привязаны к тебе.</div>
+          <h3>Личный кабинет</h3>
+          <div class="subtle">Ты вошел в систему и все новые факты публикуются от твоего имени.</div>
         </div>
       </div>
-
-      <div class="auth-grid">
-        <form id="login-form" class="stack auth-card">
-          <h4>Вход</h4>
-          <div class="field">
-            <label for="login-username">Логин</label>
-            <input id="login-username" name="username" type="text" value="${escapeHtml(state.authDraft.loginUsername)}" placeholder="например lev" />
-          </div>
-          <div class="field">
-            <label for="login-password">Пароль</label>
-            <input id="login-password" name="password" type="password" value="${escapeHtml(state.authDraft.loginPassword)}" placeholder="пароль" />
-          </div>
-          <div class="form-actions">
-            <button class="primary-button" type="submit">Войти</button>
-          </div>
-        </form>
-
-        <form id="register-form" class="stack auth-card">
-          <h4>Регистрация</h4>
-          <div class="field">
-            <label for="register-member">Я в команде как</label>
-            <select id="register-member" name="memberId" ${registerableMembers.length ? "" : "disabled"}>
-              ${
-                registerableMembers.length
-                  ? registerableMembers
-                      .map(
-                        (member) => `
-                          <option value="${member.id}" ${state.authDraft.registerMemberId === member.id ? "selected" : ""}>
-                            ${escapeHtml(member.name)}
-                          </option>
-                        `,
-                      )
-                      .join("")
-                  : '<option value="">Свободных профилей пока нет</option>'
-              }
-            </select>
-          </div>
-          <div class="field">
-            <label for="register-username">Логин</label>
-            <input id="register-username" name="username" type="text" value="${escapeHtml(state.authDraft.registerUsername)}" placeholder="например lev" />
-          </div>
-          <div class="field">
-            <label for="register-password">Пароль</label>
-            <input id="register-password" name="password" type="password" value="${escapeHtml(state.authDraft.registerPassword)}" placeholder="минимум 6 символов" />
-          </div>
-          <div class="form-actions">
-            <button class="primary-button" type="submit" ${registerableMembers.length ? "" : "disabled"}>Создать кабинет</button>
-          </div>
-        </form>
+      <div class="account-badge">
+        <div>
+          <strong>${escapeHtml(currentUser.memberName)}</strong>
+          <div class="subtle">@${escapeHtml(currentUser.username)}</div>
+        </div>
+        <button class="ghost-button" type="button" id="logout-button">Выйти</button>
       </div>
     </article>
   `;
