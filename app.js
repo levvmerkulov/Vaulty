@@ -51,6 +51,11 @@ const state = {
 let searchDebounce = null;
 let noticeTimer = null;
 let activeRecognition = null;
+let voiceShouldStop = false;
+let voiceHadFatalError = false;
+let voiceTranscriptBuffer = "";
+let voiceSessionTranscript = "";
+let voiceRestartTimer = null;
 const app = document.querySelector("#app");
 
 bootstrap();
@@ -923,10 +928,13 @@ function bindAuthEvents() {
 
   document.querySelector("#logout-button")?.addEventListener("click", async () => {
     try {
+      stopVoiceCapture();
       await apiRequest("/api/auth/logout", {
         method: "POST",
       });
       state.editingFactId = "";
+      state.voice.listening = false;
+      state.voice.loading = false;
       state.voice.status = "";
       state.voice.transcript = "";
       showNotice("Ты вышел из кабинета.");
@@ -961,7 +969,7 @@ function bindFactEvents() {
 
   document.querySelector("#voice-capture")?.addEventListener("click", async () => {
     if (state.voice.listening) {
-      activeRecognition?.stop();
+      stopVoiceCapture();
       return;
     }
     await startVoiceCapture();
@@ -1182,34 +1190,62 @@ async function startVoiceCapture() {
     return;
   }
 
+  stopVoiceCapture(true);
+  voiceShouldStop = false;
+  voiceHadFatalError = false;
+  voiceTranscriptBuffer = "";
+  voiceSessionTranscript = "";
+  state.voice.listening = true;
+  state.voice.loading = false;
+  state.voice.status = "Слушаю непрерывно. Можно делать паузы, запись продолжится, пока ты сам не нажмешь «Остановить».";
+  state.voice.transcript = "";
+  render();
+
+  beginVoiceRecognitionLoop(SpeechRecognition);
+}
+
+function beginVoiceRecognitionLoop(SpeechRecognition) {
+  clearTimeout(voiceRestartTimer);
+
   const recognition = new SpeechRecognition();
   activeRecognition = recognition;
-  let transcript = "";
+  voiceSessionTranscript = "";
 
   recognition.lang = "ru-RU";
   recognition.interimResults = true;
-  recognition.continuous = false;
+  recognition.continuous = true;
   recognition.maxAlternatives = 1;
 
   recognition.onstart = () => {
     state.voice.listening = true;
     state.voice.loading = false;
-    state.voice.status = "Слушаю. Можно говорить свободно, я соберу это в короткий черновик.";
-    state.voice.transcript = "";
+    state.voice.status = "Слушаю непрерывно. Можно делать паузы, запись продолжится, пока ты сам не нажмешь «Остановить».";
     render();
   };
 
   recognition.onresult = (event) => {
-    transcript = Array.from(event.results)
+    voiceSessionTranscript = Array.from(event.results)
       .map((result) => result[0]?.transcript || "")
       .join(" ")
       .trim();
-    state.voice.transcript = transcript;
-    state.voice.status = "Распознаю речь...";
+    state.voice.transcript = [voiceTranscriptBuffer, voiceSessionTranscript]
+      .filter(Boolean)
+      .join(" ")
+      .replace(/\s+/g, " ")
+      .trim();
+    state.voice.status = "Слушаю. Запись продолжается, даже если сделать паузу.";
     render();
   };
 
   recognition.onerror = (event) => {
+    if (event.error === "aborted" && voiceShouldStop) {
+      return;
+    }
+    if (event.error === "no-speech" && !voiceShouldStop) {
+      return;
+    }
+
+    voiceHadFatalError = true;
     activeRecognition = null;
     state.voice.listening = false;
     state.voice.loading = false;
@@ -1220,7 +1256,43 @@ async function startVoiceCapture() {
 
   recognition.onend = async () => {
     activeRecognition = null;
+
+    if (voiceHadFatalError) {
+      voiceShouldStop = true;
+      voiceTranscriptBuffer = "";
+      return;
+    }
+
+    if (!voiceShouldStop) {
+      voiceTranscriptBuffer = [voiceTranscriptBuffer, voiceSessionTranscript]
+        .filter(Boolean)
+        .join(" ")
+        .replace(/\s+/g, " ")
+        .trim();
+      voiceSessionTranscript = "";
+      state.voice.listening = true;
+      state.voice.loading = false;
+      state.voice.status = "Пауза поймана, но я продолжаю слушать дальше. Нажми «Остановить», когда закончишь.";
+      state.voice.transcript = voiceTranscriptBuffer;
+      render();
+      voiceRestartTimer = setTimeout(() => {
+        if (!voiceShouldStop && !activeRecognition) {
+          beginVoiceRecognitionLoop(SpeechRecognition);
+        }
+      }, 150);
+      return;
+    }
+
     state.voice.listening = false;
+    voiceTranscriptBuffer = [voiceTranscriptBuffer, voiceSessionTranscript]
+      .filter(Boolean)
+      .join(" ")
+      .replace(/\s+/g, " ")
+      .trim();
+    voiceSessionTranscript = "";
+    const transcript = voiceTranscriptBuffer.trim();
+    voiceTranscriptBuffer = "";
+
     if (!transcript) {
       state.voice.loading = false;
       state.voice.status = "Ничего не удалось распознать. Попробуй еще раз.";
@@ -1230,6 +1302,7 @@ async function startVoiceCapture() {
 
     state.voice.loading = true;
     state.voice.status = "Суммаризирую в черновик...";
+    state.voice.transcript = transcript;
     render();
 
     try {
@@ -1251,6 +1324,24 @@ async function startVoiceCapture() {
   };
 
   recognition.start();
+}
+
+function stopVoiceCapture(immediate = false) {
+  voiceShouldStop = true;
+  clearTimeout(voiceRestartTimer);
+
+  if (activeRecognition) {
+    activeRecognition.stop();
+  }
+
+  if (immediate) {
+    activeRecognition = null;
+    voiceHadFatalError = false;
+    voiceTranscriptBuffer = "";
+    voiceSessionTranscript = "";
+    state.voice.listening = false;
+    state.voice.loading = false;
+  }
 }
 
 async function apiRequest(url, options = {}) {
