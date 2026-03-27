@@ -357,12 +357,14 @@ def get_facts(connection):
     return facts
 
 
-def filter_facts(facts, scope, day_value, week_value, tags, query):
+def filter_facts(facts, scope, day_value, week_value, member_id, tags, query):
     normalized_query = query.strip().lower()
     selected_tags = {normalize_tag(tag) for tag in tags if normalize_tag(tag)}
     filtered = []
 
     for fact in facts:
+        if member_id and fact["memberId"] != member_id:
+            continue
         target_datetime = parse_iso_datetime(fact["createdAt"]).astimezone()
         if scope == "day" and target_datetime.date().isoformat() != day_value:
             continue
@@ -438,12 +440,28 @@ def get_focus_page(items, fact_id, page_size):
     return 1
 
 
+def resolve_member_filter(members, facts, member_id):
+    if not member_id:
+        return None
+
+    for member in members:
+        if member["id"] == member_id:
+            return {"id": member["id"], "name": member["name"]}
+
+    for fact in facts:
+        if fact["memberId"] == member_id:
+            return {"id": fact["memberId"], "name": fact["memberName"]}
+
+    return None
+
+
 def dashboard_payload(query_params, current_user):
     if current_user is None:
         return {
             "totalFacts": 0,
             "filteredTotal": 0,
             "tags": [],
+            "memberFilter": None,
             "facts": [],
             "members": [],
             "leaderboard": [],
@@ -461,6 +479,7 @@ def dashboard_payload(query_params, current_user):
     scope = query_params.get("scope", ["total"])[0]
     week = query_params.get("week", [get_week_value(datetime.now().astimezone())])[0]
     day_value = query_params.get("day", [date.today().isoformat()])[0]
+    member_id = query_params.get("memberId", [""])[0]
     tags = query_params.get("tag", [])
     query = query_params.get("q", [""])[0]
     focus_fact_id = query_params.get("focusFactId", [""])[0]
@@ -476,16 +495,18 @@ def dashboard_payload(query_params, current_user):
         filtered_facts = facts
         page = get_focus_page(filtered_facts, focus_fact_id, page_size)
     else:
-        filtered_facts = filter_facts(facts, scope, day_value, week, tags, query)
+        filtered_facts = filter_facts(facts, scope, day_value, week, member_id, tags, query)
 
     page_items, pagination = paginate_items(filtered_facts, page, page_size)
     leaderboard = build_leaderboard(all_members, filtered_facts)
     tags_list = sorted({tag for fact in facts for tag in fact["tags"]})
+    member_filter = resolve_member_filter(all_members, facts, member_id)
 
     return {
         "totalFacts": len(facts),
         "filteredTotal": len(filtered_facts),
         "tags": tags_list,
+        "memberFilter": member_filter,
         "facts": page_items,
         "members": members,
         "leaderboard": leaderboard,

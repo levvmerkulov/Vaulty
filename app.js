@@ -9,6 +9,7 @@ const state = {
     scope: "total",
     week: getCurrentWeek(),
     day: getToday(),
+    memberId: "",
     tags: [],
     query: "",
     page: 1,
@@ -78,6 +79,10 @@ async function loadDashboard() {
       pageSize: String(PAGE_SIZE),
     });
 
+    if (state.filters.memberId) {
+      params.set("memberId", state.filters.memberId);
+    }
+
     if (state.focusFactId) {
       params.set("focusFactId", state.focusFactId);
     }
@@ -146,6 +151,7 @@ function render() {
   const topMember = dashboard.leaderboard.find((member) => member.count > 0);
   const pagination = dashboard.pagination;
   const canCreateFacts = dashboard.members.some((member) => member.inTeam);
+  const activeMemberFilter = dashboard.memberFilter || null;
 
   app.innerHTML = `
     <main class="shell">
@@ -251,6 +257,24 @@ function render() {
               </div>
 
               <div class="field">
+                <label>Сотрудник</label>
+                <div class="chips">
+                  <button class="chip ${!state.filters.memberId ? "is-active" : ""}" data-member-filter="">
+                    Все сотрудники
+                  </button>
+                  ${
+                    activeMemberFilter
+                      ? `
+                        <button class="chip is-active" data-member-filter="${escapeHtml(activeMemberFilter.id)}">
+                          ${escapeHtml(activeMemberFilter.name)}
+                        </button>
+                      `
+                      : ""
+                  }
+                </div>
+              </div>
+
+              <div class="field">
                 <label>Теги</label>
                 <div class="chips">
                   <button class="chip ${state.filters.tags.length === 0 ? "is-active" : ""}" data-tag="__all__">Все</button>
@@ -273,7 +297,13 @@ function render() {
               <div>
                 <h3>Лидерборд</h3>
                 <div class="subtle">
-                  ${topMember ? `Сейчас лидирует ${escapeHtml(topMember.name)}.` : "В этом фильтре пока нет фактов."}
+                  ${
+                    activeMemberFilter
+                      ? `Показываю факты сотрудника ${escapeHtml(activeMemberFilter.name)}. Нажми на имя еще раз, чтобы снять фильтр.`
+                      : topMember
+                        ? `Сейчас лидирует ${escapeHtml(topMember.name)}.`
+                        : "В этом фильтре пока нет фактов."
+                  }
                 </div>
               </div>
               <div class="subtle">${dashboard.filteredTotal} фактов</div>
@@ -283,7 +313,11 @@ function render() {
               ${dashboard.leaderboard
                 .map(
                   (member) => `
-                    <article class="leader-row">
+                    <button
+                      class="leader-row ${state.filters.memberId === member.id ? "is-active" : ""}"
+                      type="button"
+                      data-member-filter="${member.id}"
+                    >
                       <div class="leader-top">
                         <div class="leader-name">
                           <span class="leader-dot" style="background:${member.color}"></span>
@@ -295,7 +329,7 @@ function render() {
                       <div class="leader-bar">
                         <span style="width:${member.width}%; background:${member.color}"></span>
                       </div>
-                    </article>
+                    </button>
                   `,
                 )
                 .join("")}
@@ -752,6 +786,16 @@ function bindEvents() {
       } else {
         state.filters.tags = [...state.filters.tags, tag];
       }
+      state.filters.page = 1;
+      await loadDashboard();
+    });
+  });
+
+  document.querySelectorAll("[data-member-filter]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      clearFocusFact();
+      const nextMemberId = button.dataset.memberFilter || "";
+      state.filters.memberId = state.filters.memberId === nextMemberId ? "" : nextMemberId;
       state.filters.page = 1;
       await loadDashboard();
     });
@@ -1328,6 +1372,7 @@ function emptyDashboard() {
     totalFacts: 0,
     filteredTotal: 0,
     tags: [],
+    memberFilter: null,
     facts: [],
     members: [],
     leaderboard: [],
