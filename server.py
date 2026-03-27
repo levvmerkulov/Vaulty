@@ -113,6 +113,14 @@ def ensure_database():
                 tag TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS fact_likes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                fact_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                UNIQUE(fact_id, user_id)
+            );
+
             CREATE TABLE IF NOT EXISTS app_meta (
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
@@ -137,6 +145,8 @@ def ensure_database():
             CREATE INDEX IF NOT EXISTS idx_facts_created_at ON facts(created_at DESC);
             CREATE INDEX IF NOT EXISTS idx_fact_tags_fact_id ON fact_tags(fact_id);
             CREATE INDEX IF NOT EXISTS idx_fact_tags_tag ON fact_tags(tag);
+            CREATE INDEX IF NOT EXISTS idx_fact_likes_fact_id ON fact_likes(fact_id);
+            CREATE INDEX IF NOT EXISTS idx_fact_likes_user_id ON fact_likes(user_id);
             CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
             CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
             """
@@ -306,7 +316,7 @@ def serialize_current_user(row):
     }
 
 
-def get_facts(connection):
+def get_facts(connection, current_user=None):
     rows = connection.execute(
         """
         SELECT
@@ -331,6 +341,26 @@ def get_facts(connection):
         """
     ).fetchall()
 
+    like_counts = {
+        row["fact_id"]: row["like_count"]
+        for row in connection.execute(
+            """
+            SELECT fact_id, COUNT(*) AS like_count
+            FROM fact_likes
+            GROUP BY fact_id
+            """
+        ).fetchall()
+    }
+    liked_fact_ids = set()
+    if current_user is not None:
+        liked_fact_ids = {
+            row["fact_id"]
+            for row in connection.execute(
+                "SELECT fact_id FROM fact_likes WHERE user_id = ?",
+                (current_user["id"],),
+            ).fetchall()
+        }
+
     facts = []
     for row in rows:
         updated_at = row["updated_at"] or row["created_at"]
@@ -350,6 +380,8 @@ def get_facts(connection):
                 "updatedAtLabel": format_fact_date(updated_at),
                 "edited": updated_at != row["created_at"],
                 "tags": tags,
+                "likesCount": like_counts.get(row["id"], 0),
+                "likedByCurrentUser": row["id"] in liked_fact_ids,
                 "memberDeleted": bool(row["current_deleted"]) if row["current_deleted"] is not None else True,
                 "memberInTeam": bool(row["current_in_team"]) if row["current_in_team"] is not None else False,
             }
@@ -357,13 +389,14 @@ def get_facts(connection):
     return facts
 
 
-def filter_facts(facts, scope, day_value, week_value, member_id, tags, query):
+def filter_facts(facts, scope, day_value, week_value, member_ids, tags, query):
     normalized_query = query.strip().lower()
     selected_tags = {normalize_tag(tag) for tag in tags if normalize_tag(tag)}
+    selected_member_ids = {member_id for member_id in member_ids if member_id}
     filtered = []
 
     for fact in facts:
-        if member_id and fact["memberId"] != member_id:
+        if selected_member_ids and fact["memberId"] not in selected_member_ids:
             continue
         target_datetime = parse_iso_datetime(fact["createdAt"]).astimezone()
         if scope == "day" and target_datetime.date().isoformat() != day_value:
@@ -440,19 +473,28 @@ def get_focus_page(items, fact_id, page_size):
     return 1
 
 
-def resolve_member_filter(members, facts, member_id):
-    if not member_id:
-        return None
+def resolve_member_filters(members, facts, member_ids):
+    if not member_ids:
+        return []
 
-    for member in members:
-        if member["id"] == member_id:
-            return {"id": member["id"], "name": member["name"]}
+    resolved = []
+    seen_ids = set()
+    for member_id in member_ids:
+        if not member_id or member_id in seen_ids:
+            continue
 
-    for fact in facts:
-        if fact["memberId"] == member_id:
-            return {"id": fact["memberId"], "name": fact["memberName"]}
+        match = next((member for member in members if member["id"] == member_id), None)
+        if match:
+            resolved.append({"id": match["id"], "name": match["name"]})
+            seen_ids.add(member_id)
+            continue
 
-    return None
+        fact_match = next((fact for fact in facts if fact["memberId"] == member_id), None)
+        if fact_match:
+            resolved.append({"id": fact_match["memberId"], "name": fact_match["memberName"]})
+            seen_ids.add(member_id)
+
+    return resolved
 
 
 def dashboard_payload(query_params, current_user):
@@ -461,7 +503,7 @@ def dashboard_payload(query_params, current_user):
             "totalFacts": 0,
             "filteredTotal": 0,
             "tags": [],
-            "memberFilter": None,
+            "memberFilters": [],
             "facts": [],
             "members": [],
             "leaderboard": [],
@@ -479,7 +521,7 @@ def dashboard_payload(query_params, current_user):
     scope = query_params.get("scope", ["total"])[0]
     week = query_params.get("week", [get_week_value(datetime.now().astimezone())])[0]
     day_value = query_params.get("day", [date.today().isoformat()])[0]
-    member_id = query_params.get("memberId", [""])[0]
+    member_ids = query_params.get("memberId", [])
     tags = query_params.get("tag", [])
     query = query_params.get("q", [""])[0]
     focus_fact_id = query_params.get("focusFactId", [""])[0]
@@ -489,24 +531,24 @@ def dashboard_payload(query_params, current_user):
     with get_connection() as connection:
         members = get_members(connection, include_deleted=False)
         all_members = get_members(connection, include_deleted=True)
-        facts = get_facts(connection)
+        facts = get_facts(connection, current_user)
 
     if focus_fact_id and any(fact["id"] == focus_fact_id for fact in facts):
         filtered_facts = facts
         page = get_focus_page(filtered_facts, focus_fact_id, page_size)
     else:
-        filtered_facts = filter_facts(facts, scope, day_value, week, member_id, tags, query)
+        filtered_facts = filter_facts(facts, scope, day_value, week, member_ids, tags, query)
 
     page_items, pagination = paginate_items(filtered_facts, page, page_size)
     leaderboard = build_leaderboard(all_members, filtered_facts)
     tags_list = sorted({tag for fact in facts for tag in fact["tags"]})
-    member_filter = resolve_member_filter(all_members, facts, member_id)
+    member_filters = resolve_member_filters(all_members, facts, member_ids)
 
     return {
         "totalFacts": len(facts),
         "filteredTotal": len(filtered_facts),
         "tags": tags_list,
-        "memberFilter": member_filter,
+        "memberFilters": member_filters,
         "facts": page_items,
         "members": members,
         "leaderboard": leaderboard,
@@ -826,6 +868,35 @@ def update_fact(fact_id, payload, current_user):
     return {"id": fact_id, "updatedAt": updated_at}
 
 
+def set_fact_like(fact_id, current_user, liked):
+    with get_connection() as connection:
+        fact = connection.execute("SELECT id FROM facts WHERE id = ?", (fact_id,)).fetchone()
+        if fact is None:
+            raise LookupError("Факт не найден.")
+
+        if liked:
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO fact_likes (fact_id, user_id, created_at)
+                VALUES (?, ?, ?)
+                """,
+                (fact_id, current_user["id"], utc_now_iso()),
+            )
+        else:
+            connection.execute(
+                "DELETE FROM fact_likes WHERE fact_id = ? AND user_id = ?",
+                (fact_id, current_user["id"]),
+            )
+
+        like_count = connection.execute(
+            "SELECT COUNT(*) AS like_count FROM fact_likes WHERE fact_id = ?",
+            (fact_id,),
+        ).fetchone()["like_count"]
+        connection.commit()
+
+    return {"id": fact_id, "likesCount": like_count, "likedByCurrentUser": liked}
+
+
 def cleanup_text(text):
     compact = re.sub(r"\s+", " ", text).strip()
     compact = re.sub(r"\s*([,.;:!?])\s*", r"\1 ", compact)
@@ -916,6 +987,12 @@ class VaultyHandler(BaseHTTPRequestHandler):
                     current_user = require_auth(connection, self)
                 return self.send_json(201, create_fact(payload, current_user))
 
+            if parsed_url.path.startswith("/api/facts/") and parsed_url.path.endswith("/like"):
+                with get_connection() as connection:
+                    current_user = require_auth(connection, self)
+                fact_id = parsed_url.path.split("/")[3]
+                return self.send_json(200, set_fact_like(fact_id, current_user, True))
+
             if parsed_url.path == "/api/members":
                 with get_connection() as connection:
                     require_auth(connection, self)
@@ -960,10 +1037,16 @@ class VaultyHandler(BaseHTTPRequestHandler):
 
     def do_DELETE(self):
         parsed_url = urlparse(self.path)
-        if not parsed_url.path.startswith("/api/members/"):
-            return self.send_json(404, {"error": "Маршрут не найден."})
-
         try:
+            if parsed_url.path.startswith("/api/facts/") and parsed_url.path.endswith("/like"):
+                with get_connection() as connection:
+                    current_user = require_auth(connection, self)
+                fact_id = parsed_url.path.split("/")[3]
+                return self.send_json(200, set_fact_like(fact_id, current_user, False))
+
+            if not parsed_url.path.startswith("/api/members/"):
+                return self.send_json(404, {"error": "Маршрут не найден."})
+
             with get_connection() as connection:
                 require_auth(connection, self)
             member_id = parsed_url.path.rsplit("/", 1)[-1]

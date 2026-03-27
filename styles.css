@@ -727,6 +727,53 @@ button {
   border: 1px solid rgba(67, 48, 33, 0.12);
 }
 
+.ghost-button.is-active {
+  background: rgba(210, 105, 60, 0.14);
+  color: var(--accent-strong);
+  border-color: rgba(210, 105, 60, 0.28);
+}
+
+.like-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 4px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: color 180ms ease, transform 180ms ease;
+}
+
+.like-button:hover {
+  transform: translateY(-1px);
+  color: var(--accent-strong);
+}
+
+.like-button.is-active {
+  color: var(--accent-strong);
+}
+
+.like-icon {
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.like-icon svg {
+  display: block;
+  width: 20px;
+  height: 20px;
+}
+
+.like-count {
+  font-size: 0.92rem;
+  line-height: 1;
+}
+
 .primary-button {
   background: var(--accent);
   color: #fff;
@@ -1022,6 +1069,8 @@ button {
 
 .pagination-state {
   color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.35;
 }
 
 @media (max-width: 1080px) {

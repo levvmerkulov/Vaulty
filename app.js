@@ -9,7 +9,7 @@ const state = {
     scope: "total",
     week: getCurrentWeek(),
     day: getToday(),
-    memberId: "",
+    memberIds: [],
     tags: [],
     query: "",
     page: 1,
@@ -79,9 +79,7 @@ async function loadDashboard() {
       pageSize: String(PAGE_SIZE),
     });
 
-    if (state.filters.memberId) {
-      params.set("memberId", state.filters.memberId);
-    }
+    state.filters.memberIds.forEach((memberId) => params.append("memberId", memberId));
 
     if (state.focusFactId) {
       params.set("focusFactId", state.focusFactId);
@@ -151,7 +149,7 @@ function render() {
   const topMember = dashboard.leaderboard.find((member) => member.count > 0);
   const pagination = dashboard.pagination;
   const canCreateFacts = dashboard.members.some((member) => member.inTeam);
-  const activeMemberFilter = dashboard.memberFilter || null;
+  const activeMemberFilters = dashboard.memberFilters || [];
 
   app.innerHTML = `
     <main class="shell">
@@ -212,10 +210,10 @@ function render() {
       <section class="workspace" id="workspace" ${state.detailsOpen ? "" : "hidden"}>
         <div class="workspace-top">
           <div>
-            <h2 class="section-title">Разрез по людям, тегам и времени</h2>
+            <h2 class="section-title">Журнал активности</h2>
             <p class="section-copy">
-              Можно оставить общий тотал, выбрать конкретную неделю или день, отфильтровать факты по тегам,
-              найти их по словам, поделиться прямой ссылкой и редактировать собственные записи.
+              Смотрите общую статистику или выбирайте конкретные даты. Находите записи по тегам и словам
+              и делитесь ссылками с коллегами.
             </p>
           </div>
           <button class="ghost-button" id="collapse-details">Свернуть детализацию</button>
@@ -259,17 +257,19 @@ function render() {
               <div class="field">
                 <label>Сотрудник</label>
                 <div class="chips">
-                  <button class="chip ${!state.filters.memberId ? "is-active" : ""}" data-member-filter="">
+                  <button class="chip ${state.filters.memberIds.length === 0 ? "is-active" : ""}" data-member-filter="">
                     Все сотрудники
                   </button>
                   ${
-                    activeMemberFilter
-                      ? `
-                        <button class="chip is-active" data-member-filter="${escapeHtml(activeMemberFilter.id)}">
-                          ${escapeHtml(activeMemberFilter.name)}
-                        </button>
-                      `
-                      : ""
+                    activeMemberFilters
+                      .map(
+                        (member) => `
+                          <button class="chip is-active" data-member-filter="${escapeHtml(member.id)}">
+                            ${escapeHtml(member.name)}
+                          </button>
+                        `,
+                      )
+                      .join("")
                   }
                 </div>
               </div>
@@ -298,8 +298,8 @@ function render() {
                 <h3>Лидерборд</h3>
                 <div class="subtle">
                   ${
-                    activeMemberFilter
-                      ? `Показываю факты сотрудника ${escapeHtml(activeMemberFilter.name)}. Нажми на имя еще раз, чтобы снять фильтр.`
+                    activeMemberFilters.length
+                      ? `Показываю факты: ${activeMemberFilters.map((member) => escapeHtml(member.name)).join(", ")}. Нажми на имя в лидерборде еще раз, чтобы снять выбор.`
                       : topMember
                         ? `Сейчас лидирует ${escapeHtml(topMember.name)}.`
                         : "В этом фильтре пока нет фактов."
@@ -314,7 +314,7 @@ function render() {
                 .map(
                   (member) => `
                     <button
-                      class="leader-row ${state.filters.memberId === member.id ? "is-active" : ""}"
+                      class="leader-row ${state.filters.memberIds.includes(member.id) ? "is-active" : ""}"
                       type="button"
                       data-member-filter="${member.id}"
                     >
@@ -342,7 +342,6 @@ function render() {
             <div class="panel-head">
               <div>
                 <h3>Поток фактов</h3>
-                <div class="subtle">30 фактов на страницу, поиск, share-link и редактирование своих записей.</div>
               </div>
               <div class="subtle">Страница ${pagination.page} из ${pagination.totalPages}</div>
             </div>
@@ -674,6 +673,7 @@ function renderFactCard(fact, currentUser) {
   const canEdit = currentUser && [currentUser.id, currentUser.legacyMemberId].includes(fact.authorId);
   const isEditing = state.editingFactId === fact.id;
   const factUrl = getFactUrl(fact.id);
+  const likeCount = fact.likesCount > 0 ? `<span class="like-count">${fact.likesCount}</span>` : "";
 
   return `
     <article class="fact-card ${state.focusFactId === fact.id ? "is-focused" : ""}" id="fact-${fact.id}">
@@ -724,6 +724,17 @@ function renderFactCard(fact, currentUser) {
                 .join("")}
             </div>
             <div class="fact-actions">
+              <button
+                class="like-button ${fact.likedByCurrentUser ? "is-active" : ""}"
+                type="button"
+                data-toggle-like="${fact.id}"
+                data-liked="${fact.likedByCurrentUser ? "true" : "false"}"
+                aria-pressed="${fact.likedByCurrentUser ? "true" : "false"}"
+                aria-label="${fact.likedByCurrentUser ? "Убрать лайк" : "Поставить лайк"}"
+              >
+                <span class="like-icon" aria-hidden="true">${renderLikeIcon(fact.likedByCurrentUser)}</span>
+                ${likeCount}
+              </button>
               <button class="ghost-button" type="button" data-copy-link="${fact.id}" data-copy-url="${escapeHtml(factUrl)}">Копировать ссылку</button>
               ${canEdit ? `<button class="ghost-button" type="button" data-edit-fact="${fact.id}">Редактировать</button>` : ""}
             </div>
@@ -795,7 +806,13 @@ function bindEvents() {
     button.addEventListener("click", async () => {
       clearFocusFact();
       const nextMemberId = button.dataset.memberFilter || "";
-      state.filters.memberId = state.filters.memberId === nextMemberId ? "" : nextMemberId;
+      if (!nextMemberId) {
+        state.filters.memberIds = [];
+      } else if (state.filters.memberIds.includes(nextMemberId)) {
+        state.filters.memberIds = state.filters.memberIds.filter((memberId) => memberId !== nextMemberId);
+      } else {
+        state.filters.memberIds = [...state.filters.memberIds, nextMemberId];
+      }
       state.filters.page = 1;
       await loadDashboard();
     });
@@ -1041,6 +1058,23 @@ function bindFactEvents() {
         showNotice("Ссылка на факт скопирована.");
       } catch (_error) {
         state.error = "Не удалось скопировать ссылку.";
+        render();
+      }
+    });
+  });
+
+  document.querySelectorAll("[data-toggle-like]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const factId = button.dataset.toggleLike;
+      const liked = button.dataset.liked === "true";
+
+      try {
+        await apiRequest(`/api/facts/${factId}/like`, {
+          method: liked ? "DELETE" : "POST",
+        });
+        await loadDashboard();
+      } catch (error) {
+        state.error = error.message;
         render();
       }
     });
@@ -1329,6 +1363,28 @@ function getScopeLabel(filters) {
   return "фактов за все время";
 }
 
+function renderLikeIcon(isActive) {
+  if (isActive) {
+    return `
+      <svg viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+        <path d="M11.995 21.35 10.32 19.83C4.375 14.445 1 11.385 1 7.625 1 4.565 3.42 2.15 6.5 2.15c1.74 0 3.41.81 4.495 2.08C12.09 2.96 13.76 2.15 15.5 2.15 18.58 2.15 21 4.565 21 7.625c0 3.76-3.375 6.82-9.32 12.205l-1.685 1.52Z"/>
+      </svg>
+    `;
+  }
+
+  return `
+    <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path
+        d="M11.995 21.35 10.32 19.83C4.375 14.445 1 11.385 1 7.625 1 4.565 3.42 2.15 6.5 2.15c1.74 0 3.41.81 4.495 2.08C12.09 2.96 13.76 2.15 15.5 2.15 18.58 2.15 21 4.565 21 7.625c0 3.76-3.375 6.82-9.32 12.205l-1.685 1.52Z"
+        stroke="currentColor"
+        stroke-width="1.9"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      />
+    </svg>
+  `;
+}
+
 function formatDateLabel(dateString) {
   return new Intl.DateTimeFormat("ru-RU", {
     day: "numeric",
@@ -1372,7 +1428,7 @@ function emptyDashboard() {
     totalFacts: 0,
     filteredTotal: 0,
     tags: [],
-    memberFilter: null,
+    memberFilters: [],
     facts: [],
     members: [],
     leaderboard: [],
